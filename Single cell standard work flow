@@ -1,0 +1,115 @@
+---
+title: "Single Cell RNA-Seq Analysis"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This document outlines the workflow to analyze single-cell RNA-Seq data using the **Seurat** package. The dataset consists of 20k NSCLC DTCs from 7 donors (3' v3.1 chemistry).
+
+## Load Libraries
+
+```{r load-libraries}
+library(Seurat)
+library(tidyverse)
+```
+
+## Load Dataset
+
+```{r load-data}
+# Load the NSCLC dataset
+nsclc.sparse.m <- Read10X_h5(filename = '../data/20k_NSCLC_DTC_3p_nextgem_Multiplex_count_raw_feature_bc_matrix.h5')
+str(nsclc.sparse.m)
+cts <- nsclc.sparse.m$`Gene Expression`
+
+# Initialize the Seurat object
+nsclc.seurat.obj <- CreateSeuratObject(counts = cts, project = "NSCLC", min.cells = 3, min.features = 200)
+str(nsclc.seurat.obj)
+```
+
+## 1. Quality Control (QC)
+
+```{r quality-control}
+# Calculate percentage of mitochondrial reads
+nsclc.seurat.obj[["percent.mt"]] <- PercentageFeatureSet(nsclc.seurat.obj, pattern = "^MT-")
+
+# Visualize QC metrics
+VlnPlot(nsclc.seurat.obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+FeatureScatter(nsclc.seurat.obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +
+  geom_smooth(method = 'lm')
+```
+
+## 2. Filtering
+
+```{r filtering}
+nsclc.seurat.obj <- subset(nsclc.seurat.obj, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+```
+
+## 3. Normalization
+
+```{r normalization}
+nsclc.seurat.obj <- NormalizeData(nsclc.seurat.obj)
+```
+
+## 4. Identify Highly Variable Features
+
+```{r variable-features}
+nsclc.seurat.obj <- FindVariableFeatures(nsclc.seurat.obj, selection.method = "vst", nfeatures = 2000)
+
+# Top 10 variable features
+top10 <- head(VariableFeatures(nsclc.seurat.obj), 10)
+
+# Plot variable features
+plot1 <- VariableFeaturePlot(nsclc.seurat.obj)
+LabelPoints(plot = plot1, points = top10, repel = TRUE)
+```
+
+## 5. Scaling
+
+```{r scaling}
+all.genes <- rownames(nsclc.seurat.obj)
+nsclc.seurat.obj <- ScaleData(nsclc.seurat.obj, features = all.genes)
+```
+
+## 6. Linear Dimensionality Reduction
+
+```{r pca}
+nsclc.seurat.obj <- RunPCA(nsclc.seurat.obj, features = VariableFeatures(object = nsclc.seurat.obj))
+
+# Visualize PCA results
+print(nsclc.seurat.obj[["pca"]], dims = 1:5, nfeatures = 5)
+DimHeatmap(nsclc.seurat.obj, dims = 1, cells = 500, balanced = TRUE)
+
+# Determine dimensionality
+ElbowPlot(nsclc.seurat.obj)
+```
+
+## 7. Clustering
+
+```{r clustering}
+# Find neighbors
+nsclc.seurat.obj <- FindNeighbors(nsclc.seurat.obj, dims = 1:15)
+
+# Find clusters
+nsclc.seurat.obj <- FindClusters(nsclc.seurat.obj, resolution = c(0.1, 0.3, 0.5, 0.7, 1))
+
+# Visualize clusters
+DimPlot(nsclc.seurat.obj, group.by = "RNA_snn_res.0.5", label = TRUE)
+
+# Set cluster identity
+Idents(nsclc.seurat.obj) <- "RNA_snn_res.0.1"
+```
+
+## 8. Non-Linear Dimensionality Reduction (UMAP)
+
+```{r umap}
+nsclc.seurat.obj <- RunUMAP(nsclc.seurat.obj, dims = 1:15)
+
+# Visualize UMAP
+DimPlot(nsclc.seurat.obj, reduction = "umap")
